@@ -3,25 +3,17 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>SRT Extractor — Trích xuất phụ đề từ video</title>
-<meta name="description" content="Trích xuất phụ đề .srt từ file video (mp4, mkv, webm...) trực tiếp trên trình duyệt, không cần server." />
+<title>SRT Extractor — Trích xuất & tạo phụ đề từ video</title>
+<meta name="description" content="Trích xuất phụ đề có sẵn hoặc tự tạo phụ đề bằng AI (Whisper) trực tiếp trên trình duyệt." />
 
-<!-- ⚡ Service Worker để bật crossOriginIsolated (COOP/COEP) trên GitHub Pages -->
-<!-- Phải đặt TRƯỚC mọi script khác -->
+<!-- ⚡ Service Worker để bật crossOriginIsolated (COOP/COEP) -->
 <script>
-  // Đăng ký coi-serviceworker để giả lập header COOP/COEP
-  // Nhờ đó SharedArrayBuffer hoạt động → FFmpeg.wasm chạy đa luồng
   if (!self.crossOriginIsolated) {
     navigator.serviceWorker.register('./coi-serviceworker.js')
-      .then(function (reg) {
-        // Nếu SW chưa điều khiển trang → reload 1 lần để nó áp dụng
-        if (!navigator.serviceWorker.controller) {
-          window.location.reload();
-        }
+      .then(function () {
+        if (!navigator.serviceWorker.controller) window.location.reload();
       })
-      .catch(function (e) {
-        console.warn('COI Service Worker registration failed:', e);
-      });
+      .catch(function (e) { console.warn('COI SW failed:', e); });
   }
 </script>
 
@@ -45,7 +37,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 
-<!-- FFmpeg.wasm 0.11.6 (single-file UMD) -->
+<!-- FFmpeg.wasm -->
 <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js"></script>
 
 <style>
@@ -59,7 +51,6 @@
     border: 2px solid transparent;
     background-clip: content-box;
   }
-  ::-webkit-scrollbar-thumb:hover { background: rgba(148,163,184,.45); background-clip: content-box; }
   @keyframes float-slow {
     0%, 100% { transform: translate(0, 0) scale(1); }
     50% { transform: translate(20px, -20px) scale(1.05); }
@@ -70,21 +61,23 @@
     background-color: rgb(99 102 241 / .08) !important;
     transform: scale(1.01);
   }
+  .pulse-glow { animation: pulse-glow 2s ease-in-out infinite; }
+  @keyframes pulse-glow {
+    0%, 100% { box-shadow: 0 0 20px rgba(168,85,247,.35); }
+    50% { box-shadow: 0 0 35px rgba(168,85,247,.65); }
+  }
 </style>
 </head>
 
 <body class="min-h-screen bg-[#08080d] text-slate-100 font-sans antialiased selection:bg-indigo-500/40">
 
-<!-- Background decoration -->
 <div class="fixed inset-0 overflow-hidden pointer-events-none" aria-hidden="true">
   <div class="absolute -top-40 -left-40 w-[500px] h-[500px] bg-indigo-600/15 rounded-full blur-[120px] animate-float-slow"></div>
   <div class="absolute -bottom-40 -right-40 w-[500px] h-[500px] bg-fuchsia-600/15 rounded-full blur-[120px] animate-float-slow" style="animation-delay:-6s"></div>
-  <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[700px] h-[700px] bg-purple-600/8 rounded-full blur-[130px]"></div>
 </div>
 
 <main class="relative z-10 max-w-4xl mx-auto px-4 sm:px-6 py-10 md:py-16">
 
-  <!-- Header -->
   <header class="text-center mb-10 md:mb-12">
     <div class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white/[0.04] border border-white/10 text-xs font-medium text-slate-300 mb-6 backdrop-blur-sm">
       <span class="relative flex h-2 w-2">
@@ -100,9 +93,9 @@
       </span>
     </h1>
 
-    <p class="text-slate-400 max-w-xl mx-auto text-base sm:text-lg leading-relaxed">
-      Trích xuất phụ đề có sẵn trong file video thành định dạng
-      <span class="text-slate-200 font-semibold">.srt</span> — nhanh, miễn phí và bảo mật.
+    <p class="text-slate-400 max-w-2xl mx-auto text-base sm:text-lg leading-relaxed">
+      Trích xuất phụ đề có sẵn — hoặc <span class="text-fuchsia-300 font-semibold">tự tạo phụ đề bằng AI</span>
+      (Whisper) cho video không có phụ đề.
     </p>
   </header>
 
@@ -129,7 +122,7 @@
       <div class="space-y-1.5">
         <p class="text-lg sm:text-xl font-semibold text-white">Kéo &amp; thả video vào đây</p>
         <p class="text-sm text-slate-400">
-          hoặc <span class="text-indigo-400 font-medium group-hover:text-indigo-300 transition-colors">bấm để chọn file</span> từ máy tính
+          hoặc <span class="text-indigo-400 font-medium group-hover:text-indigo-300 transition-colors">bấm để chọn file</span>
         </p>
       </div>
 
@@ -139,7 +132,6 @@
         <span class="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-md bg-white/5 border border-white/10 text-slate-400 font-medium">WEBM</span>
         <span class="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-md bg-white/5 border border-white/10 text-slate-400 font-medium">AVI</span>
         <span class="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-md bg-white/5 border border-white/10 text-slate-400 font-medium">MOV</span>
-        <span class="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-md bg-white/5 border border-white/10 text-slate-400 font-medium">TS</span>
       </div>
     </div>
   </section>
@@ -155,11 +147,65 @@
       <p id="fileName" class="font-medium text-white truncate text-sm">video.mp4</p>
       <p id="fileSize" class="text-xs text-slate-400 mt-0.5">0 B</p>
     </div>
-    <button id="resetBtn" type="button" class="text-slate-400 hover:text-white hover:bg-white/5 transition-colors p-2 rounded-lg" title="Chọn file khác" aria-label="Chọn file khác">
+    <button id="resetBtn" type="button" class="text-slate-400 hover:text-white hover:bg-white/5 transition-colors p-2 rounded-lg" title="Chọn file khác">
       <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
         <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
       </svg>
     </button>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- AI Options Panel (hiện sau khi probe xong, nếu không có sub) -->
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <div id="aiPanel" class="hidden mt-4 rounded-2xl bg-gradient-to-br from-fuchsia-500/[0.08] to-indigo-500/[0.08] border border-fuchsia-500/25 p-5 backdrop-blur-sm">
+    <div class="flex items-start gap-3 mb-4">
+      <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-fuchsia-500 to-indigo-500 flex items-center justify-center flex-shrink-0 shadow-lg shadow-fuchsia-500/30">
+        <svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/>
+        </svg>
+      </div>
+      <div class="min-w-0 flex-1">
+        <p class="font-semibold text-white">Video không có phụ đề sẵn — dùng AI để tạo?</p>
+        <p class="text-xs text-slate-300 mt-1 leading-relaxed">
+          Hệ thống sẽ dùng <strong>Whisper AI</strong> để nghe âm thanh và tự sinh phụ đề.
+          Lần đầu cần tải model (~150MB). Xử lý có thể mất <strong>5–30 phút</strong> tùy độ dài video.
+        </p>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+      <div>
+        <label class="block text-xs font-medium text-slate-300 mb-1.5">Ngôn ngữ video</label>
+        <select id="langSelect" class="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white focus:outline-none focus:ring-2 focus:ring-fuchsia-500/50">
+          <option value="vi">🇻🇳 Tiếng Việt</option>
+          <option value="en">🇬🇧 English</option>
+          <option value="zh">🇨🇳 中文</option>
+          <option value="ja">🇯🇵 日本語</option>
+          <option value="ko">🇰🇷 한국어</option>
+          <option value="fr">🇫🇷 Français</option>
+          <option value="auto" selected>🌐 Tự động nhận diện</option>
+        </select>
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-slate-300 mb-1.5">Chất lượng model</label>
+        <select id="modelSelect" class="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white focus:outline-none focus:ring-2 focus:ring-fuchsia-500/50">
+          <option value="Xenova/whisper-tiny">⚡ Tiny — ~40MB, nhanh, kém chính xác</option>
+          <option value="Xenova/whisper-base" selected>🎯 Base — ~75MB, cân bằng (khuyến nghị)</option>
+          <option value="Xenova/whisper-small">💎 Small — ~250MB, chậm nhưng chính xác</option>
+        </select>
+      </div>
+    </div>
+
+    <button id="startAiBtn" type="button" class="w-full pulse-glow inline-flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-gradient-to-r from-fuchsia-500 to-indigo-500 hover:from-fuchsia-400 hover:to-indigo-400 text-sm font-semibold text-white transition-all shadow-lg shadow-fuchsia-500/30">
+      <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+      </svg>
+      Bắt đầu tạo phụ đề bằng AI
+    </button>
+
+    <p class="mt-3 text-[11px] text-slate-400 leading-relaxed text-center">
+      ⚠️ Giữ tab mở trong suốt quá trình xử lý. Đóng tab sẽ mất tiến trình.
+    </p>
   </div>
 
   <!-- Progress -->
@@ -180,7 +226,7 @@
     <p id="progressDetail" class="mt-3 text-xs text-slate-500 font-mono truncate leading-relaxed" title=""></p>
   </div>
 
-  <!-- Alert / Message -->
+  <!-- Message -->
   <div id="message" class="hidden mt-4 rounded-2xl p-4 flex items-start gap-3 text-sm backdrop-blur-sm"></div>
 
   <!-- Results -->
@@ -192,7 +238,7 @@
             <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/>
           </svg>
         </div>
-        <span id="resultsTitle">Phụ đề tìm được</span>
+        <span id="resultsTitle">Kết quả</span>
       </h2>
     </div>
 
@@ -225,551 +271,612 @@
 
   <footer class="mt-16 text-center text-xs text-slate-500 leading-relaxed">
     <p>
-      Được xây dựng với
-      <a href="https://ffmpegwasm.netlify.app/" target="_blank" rel="noopener" class="text-indigo-400 hover:text-indigo-300 transition-colors font-medium">FFmpeg.wasm</a>
-      &nbsp;·&nbsp; Video không rời khỏi thiết bị của bạn
+      FFmpeg.wasm · Whisper (transformers.js) · Video không rời khỏi thiết bị của bạn
     </p>
   </footer>
 
 </main>
 
-<script>
-(function () {
-  'use strict';
+<script type="module">
+// ═══════════════════════════════════════════════════════════
+// Import transformers.js (ESM)
+// ═══════════════════════════════════════════════════════════
+import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2';
 
-  // ============================================================
-  // DOM refs
-  // ============================================================
-  const dropZone        = document.getElementById('dropZone');
-  const fileInput       = document.getElementById('fileInput');
-  const fileInfo        = document.getElementById('fileInfo');
-  const fileNameEl      = document.getElementById('fileName');
-  const fileSizeEl      = document.getElementById('fileSize');
-  const resetBtn        = document.getElementById('resetBtn');
-  const progressSection = document.getElementById('progressSection');
-  const progressBar     = document.getElementById('progressBar');
-  const progressPercent = document.getElementById('progressPercent');
-  const progressLabel   = document.getElementById('progressLabel');
-  const progressDetail  = document.getElementById('progressDetail');
-  const messageEl       = document.getElementById('message');
-  const resultsSection  = document.getElementById('results');
-  const resultsTitle    = document.getElementById('resultsTitle');
-  const trackTabs       = document.getElementById('trackTabs');
-  const trackInfo       = document.getElementById('trackInfo');
-  const trackMeta       = document.getElementById('trackMeta');
-  const subtitleContent = document.getElementById('subtitleContent');
-  const copyBtn         = document.getElementById('copyBtn');
-  const copyBtnText     = document.getElementById('copyBtnText');
-  const downloadBtn     = document.getElementById('downloadBtn');
+// Tắt local model (chỉ dùng remote HF)
+env.allowLocalModels = false;
+// Cho phép tải model từ HuggingFace CDN
+env.useBrowserCache = true;
 
-  // ============================================================
-  // State
-  // ============================================================
-  let ffmpeg        = null;
-  let ffmpegLoaded  = false;
-  let currentFile   = null;
-  let tracks        = [];
-  let activeTrack   = 0;
-  let logsBuffer    = [];
+// ═══════════════════════════════════════════════════════════
+// DOM refs
+// ═══════════════════════════════════════════════════════════
+const dropZone        = document.getElementById('dropZone');
+const fileInput       = document.getElementById('fileInput');
+const fileInfo        = document.getElementById('fileInfo');
+const fileNameEl      = document.getElementById('fileName');
+const fileSizeEl      = document.getElementById('fileSize');
+const resetBtn        = document.getElementById('resetBtn');
+const aiPanel         = document.getElementById('aiPanel');
+const langSelect      = document.getElementById('langSelect');
+const modelSelect     = document.getElementById('modelSelect');
+const startAiBtn      = document.getElementById('startAiBtn');
+const progressSection = document.getElementById('progressSection');
+const progressBar     = document.getElementById('progressBar');
+const progressPercent = document.getElementById('progressPercent');
+const progressLabel   = document.getElementById('progressLabel');
+const progressDetail  = document.getElementById('progressDetail');
+const messageEl       = document.getElementById('message');
+const resultsSection  = document.getElementById('results');
+const resultsTitle    = document.getElementById('resultsTitle');
+const trackTabs       = document.getElementById('trackTabs');
+const trackInfo       = document.getElementById('trackInfo');
+const trackMeta       = document.getElementById('trackMeta');
+const subtitleContent = document.getElementById('subtitleContent');
+const copyBtn         = document.getElementById('copyBtn');
+const copyBtnText     = document.getElementById('copyBtnText');
+const downloadBtn     = document.getElementById('downloadBtn');
 
-  const BITMAP_CODECS = /^(hdmv_pgs_subtitle|dvd_subtitle|dvb_subtitle|xsub|dds|dvb_teletext)$/i;
+// ═══════════════════════════════════════════════════════════
+// State
+// ═══════════════════════════════════════════════════════════
+let ffmpeg        = null;
+let ffmpegLoaded  = false;
+let currentFile   = null;
+let tracks        = [];
+let activeTrack   = 0;
+let logsBuffer    = [];
+let aiRunning     = false;
 
-  // ============================================================
-  // Utilities
-  // ============================================================
-  function formatBytes(bytes) {
-    if (!bytes || bytes <= 0) return '0 B';
-    const units = ['B', 'KB', 'MB', 'GB'];
-    const i = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
-    return (bytes / Math.pow(1024, i)).toFixed(i ? 1 : 0) + ' ' + units[i];
+const BITMAP_CODECS = /^(hdmv_pgs_subtitle|dvd_subtitle|dvb_subtitle|xsub|dds|dvb_teletext)$/i;
+
+// ═══════════════════════════════════════════════════════════
+// Utils
+// ═══════════════════════════════════════════════════════════
+function formatBytes(b) {
+  if (!b || b <= 0) return '0 B';
+  const u = ['B','KB','MB','GB'];
+  const i = Math.min(u.length-1, Math.floor(Math.log(b)/Math.log(1024)));
+  return (b/Math.pow(1024,i)).toFixed(i?1:0) + ' ' + u[i];
+}
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function showMessage(type, html) {
+  const styles = {
+    info: 'bg-blue-500/10 border border-blue-500/25 text-blue-100',
+    error: 'bg-red-500/10 border border-red-500/25 text-red-100',
+    warn: 'bg-amber-500/10 border border-amber-500/25 text-amber-100',
+    success: 'bg-emerald-500/10 border border-emerald-500/25 text-emerald-100',
+  };
+  messageEl.className = 'mt-4 rounded-2xl p-4 flex items-start gap-3 text-sm backdrop-blur-sm ' + (styles[type] || styles.info);
+  messageEl.innerHTML = html;
+  messageEl.classList.remove('hidden');
+}
+function hideMessage() { messageEl.classList.add('hidden'); }
+
+function setProgress(p, label, detail) {
+  progressSection.classList.remove('hidden');
+  p = Math.min(100, Math.max(0, p));
+  progressBar.style.width = p + '%';
+  progressPercent.textContent = Math.round(p) + '%';
+  if (label !== undefined) progressLabel.textContent = label;
+  if (detail !== undefined) {
+    progressDetail.textContent = detail || '';
+    progressDetail.title = detail || '';
   }
-
-  function escapeHtml(s) {
-    return String(s).replace(/[&<>"']/g, c => ({
-      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-    }[c]));
-  }
-
-  function showMessage(type, html) {
-    const styles = {
-      info:    'bg-blue-500/10 border border-blue-500/25 text-blue-100',
-      error:   'bg-red-500/10 border border-red-500/25 text-red-100',
-      warn:    'bg-amber-500/10 border border-amber-500/25 text-amber-100',
-      success: 'bg-emerald-500/10 border border-emerald-500/25 text-emerald-100',
-    };
-    messageEl.className = 'mt-4 rounded-2xl p-4 flex items-start gap-3 text-sm backdrop-blur-sm ' + (styles[type] || styles.info);
-    messageEl.innerHTML = html;
-    messageEl.classList.remove('hidden');
-  }
-  function hideMessage() { messageEl.classList.add('hidden'); }
-
-  function setProgress(percent, label, detail) {
-    progressSection.classList.remove('hidden');
-    const p = Math.min(100, Math.max(0, percent));
-    progressBar.style.width = p + '%';
-    progressPercent.textContent = Math.round(p) + '%';
-    if (label !== undefined) progressLabel.textContent = label;
-    if (detail !== undefined) {
-      progressDetail.textContent = detail || '';
-      progressDetail.title = detail || '';
+}
+function hideProgress() {
+  progressSection.classList.add('hidden');
+  progressBar.style.width = '0%';
+  progressPercent.textContent = '0%';
+}
+async function copyToClipboard(text) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
     }
-  }
-  function hideProgress() {
-    progressSection.classList.add('hidden');
-    progressBar.style.width = '0%';
-    progressPercent.textContent = '0%';
-    progressDetail.textContent = '';
-  }
+  } catch (_) {}
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.focus(); ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  } catch (_) { return false; }
+}
 
-  async function copyToClipboard(text) {
-    try {
-      if (navigator.clipboard && window.isSecureContext) {
-        await navigator.clipboard.writeText(text);
-        return true;
+// ═══════════════════════════════════════════════════════════
+// FFmpeg loader (0.11.6)
+// ═══════════════════════════════════════════════════════════
+async function loadFFmpeg() {
+  if (ffmpegLoaded) return ffmpeg;
+  if (typeof FFmpeg === 'undefined' || !FFmpeg.createFFmpeg) {
+    throw new Error('Không tải được FFmpeg. Kiểm tra kết nối mạng.');
+  }
+  if (typeof SharedArrayBuffer === 'undefined') {
+    throw new Error('SharedArrayBuffer chưa khả dụng. Tải lại trang (Ctrl+Shift+R).');
+  }
+  setProgress(2, 'Đang khởi tạo FFmpeg...', 'Lần đầu tải ~30MB core...');
+  ffmpeg = FFmpeg.createFFmpeg({
+    log: true,
+    logger: ({ message }) => {
+      if (message) {
+        logsBuffer.push(message);
+        progressDetail.textContent = message.length > 140 ? message.slice(0,140)+'…' : message;
       }
-    } catch (_) { /* fall through */ }
-    try {
-      const ta = document.createElement('textarea');
-      ta.value = text;
-      ta.style.position = 'fixed';
-      ta.style.opacity = '0';
-      document.body.appendChild(ta);
-      ta.focus(); ta.select();
-      const ok = document.execCommand('copy');
-      document.body.removeChild(ta);
-      return ok;
-    } catch (_) { return false; }
+    },
+    progress: ({ ratio }) => {
+      if (ratio > 0 && ratio <= 1) setProgress(45 + ratio*45, 'Đang xử lý...');
+    },
+    corePath: 'https://unpkg.com/@ffmpeg/core@0.11.0/dist/ffmpeg-core.js',
+  });
+  await ffmpeg.load();
+  ffmpegLoaded = true;
+  return ffmpeg;
+}
+
+// ═══════════════════════════════════════════════════════════
+// Parse subtitle streams
+// ═══════════════════════════════════════════════════════════
+function parseSubtitleStreams(text) {
+  const re = /Stream #(\d+):(\d+)(?:\[[^\]]+\])?(?:\(([^)]+)\))?.*?Subtitle:\s*([^\s,()]+)/;
+  const out = []; const seen = new Set();
+  for (const line of text.split('\n')) {
+    const m = line.match(re);
+    if (!m) continue;
+    const key = m[1]+':'+m[2];
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ input:+m[1], stream:+m[2], lang:m[3]||'', codec:m[4]||'unknown' });
+  }
+  return out;
+}
+async function runExec(args) {
+  logsBuffer = [];
+  try { await ffmpeg.run(...args); }
+  catch (err) { logsBuffer.push('[error] ' + (err?.message || err)); }
+  await new Promise(r => setTimeout(r, 60));
+  return { logs: logsBuffer.join('\n') };
+}
+
+// ═══════════════════════════════════════════════════════════
+// Try extract embedded subs
+// ═══════════════════════════════════════════════════════════
+async function tryExtractEmbedded(file) {
+  await loadFFmpeg();
+
+  const ext = (file.name.match(/\.[a-z0-9]+$/i) || ['.mp4'])[0].toLowerCase();
+  const inputName = 'input' + ext;
+
+  setProgress(10, 'Đang nạp file...', `${file.name} · ${formatBytes(file.size)}`);
+  const data = await FFmpeg.fetchFile(file);
+  ffmpeg.FS('writeFile', inputName, data);
+
+  setProgress(25, 'Đang phân tích...', 'Tìm phụ đề có sẵn...');
+  const probe = await runExec(['-hide_banner', '-i', inputName]);
+  const streams = parseSubtitleStreams(probe.logs);
+
+  if (streams.length === 0) {
+    try { ffmpeg.FS('unlink', inputName); } catch (_) {}
+    return { found: false };
   }
 
-  // ============================================================
-  // FFmpeg loader — dùng 0.11.6 với SharedArrayBuffer (đã bật COI)
-  // ============================================================
-  async function loadFFmpeg() {
-    if (ffmpegLoaded) return ffmpeg;
-
-    if (typeof FFmpeg === 'undefined' || !FFmpeg.createFFmpeg) {
-      throw new Error('Không tải được thư viện FFmpeg. Vui lòng kiểm tra kết nối mạng và thử lại.');
+  // Extract từng track
+  for (let i = 0; i < streams.length; i++) {
+    const s = streams[i];
+    const p = 30 + (i / streams.length) * 60;
+    setProgress(p, `Trích xuất ${i+1}/${streams.length}...`, `Codec: ${s.codec}`);
+    if (BITMAP_CODECS.test(s.codec)) {
+      tracks.push({ ...s, content: null, source: 'embedded',
+        error: `Phụ đề dạng hình ảnh (${s.codec}) không chuyển được sang SRT.` });
+      continue;
     }
-
-    if (typeof SharedArrayBuffer === 'undefined') {
-      throw new Error(
-        'SharedArrayBuffer chưa khả dụng. Service Worker COI có thể chưa được kích hoạt. ' +
-        'Vui lòng tải lại trang (Ctrl+Shift+R) và thử lại.'
-      );
+    const outName = `sub_${i}.srt`;
+    await runExec(['-hide_banner','-nostdin','-y','-i',inputName,'-map',`0:${s.stream}`,'-c:s','srt',outName]);
+    try {
+      const raw = ffmpeg.FS('readFile', outName);
+      let content = new TextDecoder('utf-8',{fatal:false}).decode(raw);
+      if (content.charCodeAt(0) === 0xFEFF) content = content.slice(1);
+      tracks.push({ ...s, content: content.trim() ? content : null, source: 'embedded',
+        error: content.trim() ? null : 'Track rỗng.' });
+    } catch (err) {
+      tracks.push({ ...s, content: null, source: 'embedded', error: err.message });
     }
+    try { ffmpeg.FS('unlink', outName); } catch (_) {}
+  }
 
-    setProgress(2, 'Đang khởi tạo FFmpeg...', 'Lần đầu tải ~30MB core, vui lòng đợi...');
+  try { ffmpeg.FS('unlink', inputName); } catch (_) {}
+  const ok = tracks.filter(t => t.content).length;
+  return { found: ok > 0, streams };
+}
 
-    ffmpeg = FFmpeg.createFFmpeg({
-      log: true,
-      logger: ({ type, message }) => {
-        if (message) {
-          logsBuffer.push(message);
-          if (message.length) {
-            progressDetail.textContent = message.length > 140 ? message.slice(0, 140) + '…' : message;
-            progressDetail.title = message;
-          }
+// ═══════════════════════════════════════════════════════════
+// Extract audio (16kHz mono WAV) via FFmpeg
+// ═══════════════════════════════════════════════════════════
+async function extractAudio(file) {
+  await loadFFmpeg();
+  const ext = (file.name.match(/\.[a-z0-9]+$/i) || ['.mp4'])[0].toLowerCase();
+  const inputName = 'input' + ext;
+  const wavName   = 'audio.wav';
+
+  setProgress(5, 'Đang nạp video...', file.name);
+  const data = await FFmpeg.fetchFile(file);
+  ffmpeg.FS('writeFile', inputName, data);
+
+  setProgress(15, 'Đang tách âm thanh...', 'Chuyển sang 16kHz mono WAV...');
+  await runExec([
+    '-hide_banner','-nostdin','-y',
+    '-i', inputName,
+    '-vn','-ac','1','-ar','16000','-f','wav',
+    wavName,
+  ]);
+
+  const wav = ffmpeg.FS('readFile', wavName);
+  try { ffmpeg.FS('unlink', inputName); } catch(_) {}
+  try { ffmpeg.FS('unlink', wavName); } catch(_) {}
+
+  if (!wav || wav.length < 100) throw new Error('Không tách được âm thanh từ video.');
+  return new Uint8Array(wav);
+}
+
+// ═══════════════════════════════════════════════════════════
+// Decode WAV bytes → Float32Array (16kHz mono)
+// ═══════════════════════════════════════════════════════════
+async function wavToFloat32(wavBytes) {
+  const audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+  const buf = await audioCtx.decodeAudioData(wavBytes.buffer.slice(0));
+  const data = buf.getChannelData(0);
+  audioCtx.close();
+  return data;
+}
+
+// ═══════════════════════════════════════════════════════════
+// Whisper transcription
+// ═══════════════════════════════════════════════════════════
+let transcriberCache = {};
+async function getTranscriber(modelId) {
+  if (transcriberCache[modelId]) return transcriberCache[modelId];
+
+  setProgress(20, 'Đang tải model AI...', `${modelId} — có thể mất vài phút lần đầu`);
+  let lastLogged = 0;
+
+  const transcriber = await pipeline(
+    'automatic-speech-recognition',
+    modelId,
+    {
+      quantized: true,
+      progress_callback: (p) => {
+        // p.status: 'initiate' | 'download' | 'progress' | 'done' | 'ready'
+        if (p.status === 'progress' && p.file && p.progress != null) {
+          const pct = Math.round(20 + p.progress * 0.15); // 20-35%
+          setProgress(pct, 'Đang tải model AI...', `${p.file} — ${Math.round(p.progress)}%`);
+        } else if (p.status === 'done' && p.file) {
+          progressDetail.textContent = `✔ ${p.file}`;
         }
       },
-      progress: ({ ratio }) => {
-        if (typeof ratio === 'number' && ratio > 0 && ratio <= 1) {
-          const p = 45 + ratio * 45;
-          setProgress(p, 'Đang trích xuất phụ đề...');
-        }
-      },
-      corePath: 'https://unpkg.com/@ffmpeg/core@0.11.0/dist/ffmpeg-core.js',
+    }
+  );
+
+  transcriberCache[modelId] = transcriber;
+  return transcriber;
+}
+
+async function transcribeAudio(float32, lang) {
+  const modelId = modelSelect.value;
+  const transcriber = await getTranscriber(modelId);
+
+  const totalSec = float32.length / 16000;
+  setProgress(35, 'Đang nhận dạng giọng nói...', `Độ dài audio: ${Math.floor(totalSec/60)}m ${Math.round(totalSec%60)}s`);
+
+  // Chia thành các chunk, dịch chuyển tiến trình theo thời gian xử lý
+  let processedSec = 0;
+  const opts = {
+    chunk_length_s: 30,
+    stride_length_s: 5,
+    return_timestamps: true,
+    task: 'transcribe',
+    chunk_callback: (chunk) => {
+      // ước lượng tiến trình (35% → 95%)
+      const end = Math.min(30, chunk.length / 16000);
+      processedSec += end;
+      const pct = 35 + Math.min(60, (processedSec / totalSec) * 60);
+      setProgress(pct, 'Đang nhận dạng giọng nói...',
+        `~${Math.floor(processedSec/60)}m${Math.round(processedSec%60)}s / ${Math.floor(totalSec/60)}m${Math.round(totalSec%60)}s`);
+    },
+  };
+  if (lang && lang !== 'auto') opts.language = lang;
+  else opts.language = null;
+
+  const result = await transcriber(float32, opts);
+  setProgress(96, 'Đang tạo file SRT...', '');
+
+  // result: { text, chunks: [{ text, timestamp: [s, e] }] }
+  const chunks = (result.chunks || []).map(c => ({
+    text: (c.text || '').trim(),
+    start: c.timestamp?.[0] ?? 0,
+    end: c.timestamp?.[1] ?? (c.timestamp?.[0] ?? 0) + 2,
+  })).filter(c => c.text.length > 0);
+
+  return chunksToSrt(chunks);
+}
+
+function chunksToSrt(chunks) {
+  if (!chunks.length) return '';
+  const pad = (n, w = 2) => String(n).padStart(w, '0');
+  const fmt = (s) => {
+    if (s == null || isNaN(s)) s = 0;
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const ss = Math.floor(s % 60);
+    const ms = Math.round((s - Math.floor(s)) * 1000);
+    return `${pad(h)}:${pad(m)}:${pad(ss)},${pad(ms, 3)}`;
+  };
+  return chunks.map((c, i) =>
+    `${i + 1}\n${fmt(c.start)} --> ${fmt(c.end)}\n${c.text}\n`
+  ).join('\n');
+}
+
+// ═══════════════════════════════════════════════════════════
+// Run AI pipeline
+// ═══════════════════════════════════════════════════════════
+async function runAI() {
+  if (!currentFile || aiRunning) return;
+  aiRunning = true;
+  startAiBtn.disabled = true;
+  startAiBtn.classList.add('opacity-50', 'cursor-not-allowed');
+  hideMessage();
+  resultsSection.classList.add('hidden');
+
+  try {
+    // 1. Extract audio
+    const wavBytes = await extractAudio(currentFile);
+
+    // 2. Decode to Float32Array
+    setProgress(18, 'Đang xử lý âm thanh...', '');
+    const float32 = await wavToFloat32(wavBytes);
+
+    if (float32.length < 16000) throw new Error('Audio quá ngắn (dưới 1 giây).');
+
+    // 3. Transcribe
+    const srt = await transcribeAudio(float32, langSelect.value);
+
+    if (!srt.trim()) throw new Error('AI không nhận dạng được nội dung nào. Thử đổi ngôn ngữ hoặc model lớn hơn.');
+
+    // 4. Add to tracks
+    const lang = langSelect.value === 'auto' ? 'auto' : langSelect.value;
+    tracks.push({
+      input: 0, stream: 0,
+      lang: lang === 'auto' ? '' : lang,
+      codec: 'whisper-ai',
+      content: srt,
+      source: 'ai',
+      error: null,
     });
 
-    await ffmpeg.load();
-    ffmpegLoaded = true;
-    return ffmpeg;
-  }
-
-  // ============================================================
-  // Parse subtitle streams từ log ffmpeg
-  // ============================================================
-  function parseSubtitleStreams(text) {
-    const re = /Stream #(\d+):(\d+)(?:\[[^\]]+\])?(?:\(([^)]+)\))?.*?Subtitle:\s*([^\s,()]+)/;
-    const streams = [];
-    const seen = new Set();
-
-    for (const line of text.split('\n')) {
-      const m = line.match(re);
-      if (!m) continue;
-      const input  = parseInt(m[1], 10);
-      const stream = parseInt(m[2], 10);
-      const key = input + ':' + stream;
-      if (seen.has(key)) continue;
-      seen.add(key);
-
-      streams.push({
-        input,
-        stream,
-        lang:  m[3] || '',
-        codec: m[4] || 'unknown',
-        title: '',
-      });
-    }
-    return streams;
-  }
-
-  // ============================================================
-  // Run ffmpeg.run và capture logs
-  // ============================================================
-  async function runExec(args) {
-    logsBuffer = [];
-    try {
-      await ffmpeg.run(...args);
-    } catch (err) {
-      logsBuffer.push('[exec error] ' + (err && err.message ? err.message : String(err)));
-    }
-    await new Promise(r => setTimeout(r, 60));
-    return { logs: logsBuffer.join('\n') };
-  }
-
-  // ============================================================
-  // Main extraction flow
-  // ============================================================
-  async function extractAll(file) {
-    await loadFFmpeg();
-
-    const extMatch = file.name.match(/\.[a-z0-9]+$/i);
-    const ext = extMatch ? extMatch[0].toLowerCase() : '.mp4';
-    const inputName = 'input' + ext;
-
-    // 1. Ghi file vào virtual FS
-    setProgress(10, 'Đang nạp file video...', `${file.name} · ${formatBytes(file.size)}`);
-    const data = await FFmpeg.fetchFile(file);
-    ffmpeg.FS('writeFile', inputName, data);
-
-    // 2. Probe để tìm subtitle streams
-    setProgress(25, 'Đang phân tích video...', 'Tìm phụ đề tích hợp...');
-    const probe = await runExec(['-hide_banner', '-i', inputName]);
-    const streams = parseSubtitleStreams(probe.logs);
-
-    if (streams.length === 0) {
-      try { ffmpeg.FS('unlink', inputName); } catch (_) {}
-      hideProgress();
-      showMessage('warn', `
-        <svg class="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01M5.07 19h13.86a2 2 0 001.74-3L13.74 4a2 2 0 00-3.48 0L3.32 16a2 2 0 001.74 3z"/>
-        </svg>
-        <div>
-          <p class="font-semibold">Không tìm thấy phụ đề tích hợp trong video này.</p>
-          <p class="mt-1 text-xs opacity-80">File này không chứa track phụ đề nào (hoặc phụ đề đã bị loại bỏ khỏi container). Bạn có thể thử với file video khác.</p>
-        </div>
-      `);
-      return;
-    }
-
-    // 3. Trích xuất từng subtitle stream
-    for (let i = 0; i < streams.length; i++) {
-      const s = streams[i];
-      const p = 30 + (i / streams.length) * 65;
-      const langLabel = s.lang ? s.lang.toUpperCase() : `Track ${i + 1}`;
-      setProgress(p, `Trích xuất phụ đề ${i + 1}/${streams.length} (${langLabel})...`, `Codec: ${s.codec}`);
-
-      if (BITMAP_CODECS.test(s.codec)) {
-        tracks.push({
-          ...s,
-          content: null,
-          error: `Phụ đề dạng hình ảnh (${s.codec}) không thể chuyển sang SRT mà không cần OCR.`,
-        });
-        continue;
-      }
-
-      const outName = `sub_${i}.srt`;
-      await runExec([
-        '-hide_banner', '-nostdin', '-y',
-        '-i', inputName,
-        '-map', `0:${s.stream}`,
-        '-c:s', 'srt',
-        outName,
-      ]);
-
-      try {
-        const raw = ffmpeg.FS('readFile', outName);
-        let content = new TextDecoder('utf-8', { fatal: false }).decode(raw);
-        if (content.charCodeAt(0) === 0xFEFF) content = content.slice(1);
-
-        if (!content.trim()) {
-          tracks.push({ ...s, content: null, error: 'Track phụ đề rỗng.' });
-        } else {
-          tracks.push({ ...s, content });
-        }
-      } catch (err) {
-        tracks.push({
-          ...s,
-          content: null,
-          error: 'Không thể trích xuất track này. ' + (err && err.message ? err.message : ''),
-        });
-      }
-
-      try { ffmpeg.FS('unlink', outName); } catch (_) {}
-    }
-
-    // 4. Dọn dẹp input
-    try { ffmpeg.FS('unlink', inputName); } catch (_) {}
-
-    // 5. Kết thúc
     setProgress(100, 'Hoàn tất!', '');
-    await new Promise(r => setTimeout(r, 350));
+    await new Promise(r => setTimeout(r, 400));
     hideProgress();
-
-    const okCount = tracks.filter(t => t.content).length;
-    if (okCount === 0) {
-      showMessage('error', `
-        <svg class="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01M5.07 19h13.86a2 2 0 001.74-3L13.74 4a2 2 0 00-3.48 0L3.32 16a2 2 0 001.74 3z"/>
-        </svg>
-        <div>
-          <p class="font-semibold">Có track phụ đề nhưng không thể trích xuất.</p>
-          <p class="mt-1 text-xs opacity-80">Có thể phụ đề ở định dạng hình ảnh (PGS/DVD) hoặc codec không hỗ trợ chuyển sang SRT.</p>
-        </div>
-      `);
-      return;
-    }
 
     showMessage('success', `
       <svg class="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
         <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
       </svg>
       <div>
-        <p class="font-semibold">Đã trích xuất thành công ${okCount} track phụ đề!</p>
-        <p class="mt-1 text-xs opacity-80">Xem nội dung bên dưới, sau đó sao chép hoặc tải về file .srt.</p>
+        <p class="font-semibold">Đã tạo phụ đề bằng AI thành công!</p>
+        <p class="mt-1 text-xs opacity-80">Xem nội dung bên dưới. Chất lượng phụ thuộc vào âm thanh và model đã chọn.</p>
       </div>
     `);
 
-    activeTrack = tracks.findIndex(t => t.content);
+    activeTrack = tracks.findIndex(t => t.content && t.source === 'ai');
     if (activeTrack < 0) activeTrack = 0;
+    aiPanel.classList.add('hidden');
     renderResults();
+
+  } catch (err) {
+    console.error(err);
+    hideProgress();
+    showMessage('error', `
+      <svg class="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01M5.07 19h13.86a2 2 0 001.74-3L13.74 4a2 2 0 00-3.48 0L3.32 16a2 2 0 001.74 3z"/>
+      </svg>
+      <div>
+        <p class="font-semibold">Lỗi khi tạo phụ đề bằng AI.</p>
+        <p class="mt-1 text-xs opacity-80">${escapeHtml(err.message || String(err))}</p>
+      </div>
+    `);
+    aiPanel.classList.remove('hidden');
+  } finally {
+    aiRunning = false;
+    startAiBtn.disabled = false;
+    startAiBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// Render results
+// ═══════════════════════════════════════════════════════════
+function renderResults() {
+  if (!tracks.length) { resultsSection.classList.add('hidden'); return; }
+  resultsSection.classList.remove('hidden');
+
+  const okCount = tracks.filter(t => t.content).length;
+  resultsTitle.textContent = `Kết quả — ${okCount}/${tracks.length} track thành công`;
+
+  trackTabs.innerHTML = '';
+  tracks.forEach((t, i) => {
+    const label = t.source === 'ai'
+      ? `🤖 AI${t.lang ? ' ('+t.lang+')' : ''}`
+      : (t.lang ? t.lang.toUpperCase() : `Track ${i+1}`);
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    const isActive = i === activeTrack;
+    const isOk = !!t.content;
+    const base = 'px-3 py-1.5 rounded-lg text-xs font-medium border transition-all duration-200 flex items-center gap-1.5';
+    btn.className = isActive
+      ? base + ' bg-gradient-to-r from-indigo-500 to-fuchsia-500 border-transparent text-white shadow-lg shadow-indigo-500/25'
+      : base + ' bg-white/5 border-white/10 text-slate-300 hover:bg-white/10';
+    const dot = isOk ? (isActive ? 'bg-white' : 'bg-emerald-400') : 'bg-amber-400';
+    btn.innerHTML = `<span class="w-1.5 h-1.5 rounded-full ${dot}"></span><span>${escapeHtml(label)}</span><span class="opacity-60 text-[10px] font-mono">${escapeHtml(t.codec)}</span>`;
+    btn.addEventListener('click', () => { activeTrack = i; renderResults(); });
+    trackTabs.appendChild(btn);
+  });
+
+  const t = tracks[activeTrack];
+  trackInfo.textContent = t.source === 'ai' ? 'AI' : (t.codec || 'SRT').toUpperCase();
+
+  if (t.content) {
+    const cues = (t.content.match(/\d{2}:\d{2}:\d{2}[,.]\d{3}\s*-->/g) || []).length;
+    const parts = [];
+    if (t.source === 'ai') parts.push('Tạo bằng Whisper AI');
+    if (t.lang) parts.push(`Ngôn ngữ: ${t.lang}`);
+    if (cues) parts.push(`${cues} dòng`);
+    parts.push(`${(t.content.length/1024).toFixed(1)} KB`);
+    trackMeta.textContent = parts.join(' · ');
+    subtitleContent.textContent = t.content;
+    subtitleContent.classList.remove('text-amber-300');
+    subtitleContent.classList.add('text-slate-300');
+    copyBtn.disabled = false; downloadBtn.disabled = false;
+    copyBtn.classList.remove('opacity-40','cursor-not-allowed');
+    downloadBtn.classList.remove('opacity-40','cursor-not-allowed');
+  } else {
+    trackMeta.textContent = '';
+    subtitleContent.textContent = '⚠ ' + (t.error || 'Không có nội dung.');
+    subtitleContent.classList.remove('text-slate-300');
+    subtitleContent.classList.add('text-amber-300');
+    copyBtn.disabled = true; downloadBtn.disabled = true;
+    copyBtn.classList.add('opacity-40','cursor-not-allowed');
+    downloadBtn.classList.add('opacity-40','cursor-not-allowed');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// Main handler
+// ═══════════════════════════════════════════════════════════
+async function handleFile(file) {
+  if (!file) return;
+  hideMessage();
+  resultsSection.classList.add('hidden');
+  aiPanel.classList.add('hidden');
+  tracks = []; activeTrack = 0; currentFile = file;
+
+  fileNameEl.textContent = file.name;
+  fileSizeEl.textContent = formatBytes(file.size);
+  fileInfo.classList.remove('hidden');
+  dropZone.classList.add('hidden');
+
+  if (file.size > 1.5 * 1024 * 1024 * 1024) {
+    showMessage('warn', `
+      <svg class="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01M5.07 19h13.86a2 2 0 001.74-3L13.74 4a2 2 0 00-3.48 0L3.32 16a2 2 0 001.74 3z"/>
+      </svg>
+      <div><p class="font-semibold">File lớn (${formatBytes(file.size)}).</p>
+      <p class="mt-1 text-xs opacity-80">Có thể gặp giới hạn bộ nhớ ~2GB.</p></div>
+    `);
   }
 
-  // ============================================================
-  // Render kết quả
-  // ============================================================
-  function renderResults() {
-    if (!tracks.length) {
-      resultsSection.classList.add('hidden');
-      return;
-    }
+  try {
+    // Bước 1: thử trích xuất phụ đề có sẵn
+    const res = await tryExtractEmbedded(file);
+    hideProgress();
 
-    resultsSection.classList.remove('hidden');
-    const okCount = tracks.filter(t => t.content).length;
-    resultsTitle.textContent = `Phụ đề tìm được — ${okCount}/${tracks.length} track trích xuất thành công`;
-
-    trackTabs.innerHTML = '';
-    tracks.forEach((t, i) => {
-      const langLabel = t.lang ? t.lang.toUpperCase() : `Track ${i + 1}`;
-      const btn = document.createElement('button');
-      btn.type = 'button';
-
-      const isActive = i === activeTrack;
-      const isOk = !!t.content;
-      const base = 'px-3 py-1.5 rounded-lg text-xs font-medium border transition-all duration-200 flex items-center gap-1.5';
-
-      if (isActive) {
-        btn.className = base + ' bg-gradient-to-r from-indigo-500 to-fuchsia-500 border-transparent text-white shadow-lg shadow-indigo-500/25';
-      } else {
-        btn.className = base + ' bg-white/5 border-white/10 text-slate-300 hover:bg-white/10 hover:border-white/20';
-      }
-
-      const dotColor = isOk ? (isActive ? 'bg-white' : 'bg-emerald-400') : 'bg-amber-400';
-      btn.innerHTML = `
-        <span class="w-1.5 h-1.5 rounded-full ${dotColor}"></span>
-        <span>${escapeHtml(langLabel)}</span>
-        <span class="opacity-60 text-[10px] font-mono">${escapeHtml(t.codec)}</span>
-      `;
-      btn.addEventListener('click', () => {
-        activeTrack = i;
-        renderResults();
-      });
-      trackTabs.appendChild(btn);
-    });
-
-    const t = tracks[activeTrack];
-    trackInfo.textContent = (t.codec || 'srt').toUpperCase();
-
-    if (t.content) {
-      const cues = (t.content.match(/\d{2}:\d{2}:\d{2}[,.]\d{3}\s*-->/g) || []).length;
-      const parts = [];
-      if (t.lang) parts.push(`Ngôn ngữ: ${t.lang}`);
-      if (cues) parts.push(`${cues} dòng phụ đề`);
-      parts.push(`${(t.content.length / 1024).toFixed(1)} KB`);
-      trackMeta.textContent = parts.join(' · ');
-
-      subtitleContent.textContent = t.content;
-      subtitleContent.classList.remove('text-amber-300');
-      subtitleContent.classList.add('text-slate-300');
-
-      copyBtn.disabled = false;
-      downloadBtn.disabled = false;
-      copyBtn.classList.remove('opacity-40', 'cursor-not-allowed');
-      downloadBtn.classList.remove('opacity-40', 'cursor-not-allowed');
+    if (res.found) {
+      const okCount = tracks.filter(t => t.content).length;
+      showMessage('success', `
+        <svg class="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+        </svg>
+        <div><p class="font-semibold">Tìm thấy ${okCount} track phụ đề có sẵn!</p>
+        <p class="mt-1 text-xs opacity-80">Xem kết quả bên dưới.</p></div>
+      `);
+      activeTrack = tracks.findIndex(t => t.content);
+      if (activeTrack < 0) activeTrack = 0;
+      renderResults();
     } else {
-      trackMeta.textContent = '';
-      subtitleContent.textContent = '⚠ ' + (t.error || 'Không thể trích xuất track phụ đề này.');
-      subtitleContent.classList.remove('text-slate-300');
-      subtitleContent.classList.add('text-amber-300');
-
-      copyBtn.disabled = true;
-      downloadBtn.disabled = true;
-      copyBtn.classList.add('opacity-40', 'cursor-not-allowed');
-      downloadBtn.classList.add('opacity-40', 'cursor-not-allowed');
-    }
-  }
-
-  // ============================================================
-  // Event handlers
-  // ============================================================
-  async function handleFile(file) {
-    if (!file) return;
-
-    hideMessage();
-    resultsSection.classList.add('hidden');
-    tracks = [];
-    activeTrack = 0;
-    currentFile = file;
-
-    fileNameEl.textContent = file.name;
-    fileSizeEl.textContent = formatBytes(file.size);
-    fileInfo.classList.remove('hidden');
-    dropZone.classList.add('hidden');
-
-    if (file.size > 1.5 * 1024 * 1024 * 1024) {
+      // Không có phụ đề → hiện panel AI
       showMessage('warn', `
         <svg class="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
           <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01M5.07 19h13.86a2 2 0 001.74-3L13.74 4a2 2 0 00-3.48 0L3.32 16a2 2 0 001.74 3z"/>
         </svg>
-        <div>
-          <p class="font-semibold">File khá lớn (${formatBytes(file.size)}).</p>
-          <p class="mt-1 text-xs opacity-80">FFmpeg.wasm giới hạn bộ nhớ ~2GB. Nếu gặp lỗi, bạn có thể thử file nhỏ hơn.</p>
-        </div>
+        <div><p class="font-semibold">Không tìm thấy phụ đề có sẵn trong video.</p>
+        <p class="mt-1 text-xs opacity-80">Bạn có thể dùng AI để tự tạo phụ đề ở tùy chọn bên dưới.</p></div>
       `);
+      aiPanel.classList.remove('hidden');
     }
-
-    try {
-      await extractAll(file);
-    } catch (err) {
-      console.error(err);
-      hideProgress();
-      showMessage('error', `
-        <svg class="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01M5.07 19h13.86a2 2 0 001.74-3L13.74 4a2 2 0 00-3.48 0L3.32 16a2 2 0 001.74 3z"/>
-        </svg>
-        <div>
-          <p class="font-semibold">Đã xảy ra lỗi trong quá trình xử lý.</p>
-          <p class="mt-1 text-xs opacity-80">${escapeHtml(err && err.message ? err.message : String(err))}</p>
-        </div>
-      `);
-    }
-  }
-
-  function resetAll() {
-    currentFile = null;
-    tracks = [];
-    activeTrack = 0;
-    fileInput.value = '';
-    fileInfo.classList.add('hidden');
-    dropZone.classList.remove('hidden');
-    resultsSection.classList.add('hidden');
-    hideMessage();
+  } catch (err) {
+    console.error(err);
     hideProgress();
+    showMessage('error', `
+      <svg class="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01M5.07 19h13.86a2 2 0 001.74-3L13.74 4a2 2 0 00-3.48 0L3.32 16a2 2 0 001.74 3z"/>
+      </svg>
+      <div><p class="font-semibold">Lỗi xử lý.</p>
+      <p class="mt-1 text-xs opacity-80">${escapeHtml(err.message || String(err))}</p></div>
+    `);
   }
+}
 
-  // Drag & drop
-  ['dragenter', 'dragover'].forEach(evt => {
-    dropZone.addEventListener(evt, (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      dropZone.classList.add('drop-active');
-    });
-  });
-  ['dragleave', 'drop'].forEach(evt => {
-    dropZone.addEventListener(evt, (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (evt === 'dragleave' && dropZone.contains(e.relatedTarget)) return;
-      dropZone.classList.remove('drop-active');
-    });
-  });
-  dropZone.addEventListener('drop', (e) => {
-    const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
-    if (file) handleFile(file);
-  });
+function resetAll() {
+  currentFile = null; tracks = []; activeTrack = 0;
+  fileInput.value = '';
+  fileInfo.classList.add('hidden');
+  dropZone.classList.remove('hidden');
+  resultsSection.classList.add('hidden');
+  aiPanel.classList.add('hidden');
+  hideMessage(); hideProgress();
+}
 
-  // Click / keyboard
-  dropZone.addEventListener('click', () => fileInput.click());
-  dropZone.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault();
-      fileInput.click();
-    }
-  });
+// ═══════════════════════════════════════════════════════════
+// Events
+// ═══════════════════════════════════════════════════════════
+['dragenter','dragover'].forEach(e => dropZone.addEventListener(e, ev => {
+  ev.preventDefault(); ev.stopPropagation(); dropZone.classList.add('drop-active');
+}));
+['dragleave','drop'].forEach(e => dropZone.addEventListener(e, ev => {
+  ev.preventDefault(); ev.stopPropagation();
+  if (e === 'dragleave' && dropZone.contains(ev.relatedTarget)) return;
+  dropZone.classList.remove('drop-active');
+}));
+dropZone.addEventListener('drop', ev => {
+  const f = ev.dataTransfer?.files?.[0];
+  if (f) handleFile(f);
+});
+dropZone.addEventListener('click', () => fileInput.click());
+dropZone.addEventListener('keydown', ev => {
+  if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); fileInput.click(); }
+});
+fileInput.addEventListener('change', ev => {
+  const f = ev.target.files?.[0];
+  if (f) handleFile(f);
+});
+resetBtn.addEventListener('click', resetAll);
+startAiBtn.addEventListener('click', runAI);
 
-  fileInput.addEventListener('change', (e) => {
-    const file = e.target.files && e.target.files[0];
-    if (file) handleFile(file);
-  });
+copyBtn.addEventListener('click', async () => {
+  const t = tracks[activeTrack];
+  if (!t?.content) return;
+  const ok = await copyToClipboard(t.content);
+  copyBtnText.textContent = ok ? 'Đã sao chép!' : 'Lỗi';
+  setTimeout(() => { copyBtnText.textContent = 'Sao chép'; }, 1800);
+});
 
-  resetBtn.addEventListener('click', resetAll);
+downloadBtn.addEventListener('click', () => {
+  const t = tracks[activeTrack];
+  if (!t?.content) return;
+  const base = (currentFile?.name || 'subtitles').replace(/\.[^.]+$/,'').replace(/[^\w\-. ]+/g,'_').slice(0,80) || 'subtitles';
+  const sfx = t.source === 'ai' ? '.ai' : (t.lang ? '.'+t.lang : '');
+  const blob = new Blob([t.content], { type: 'application/x-subrip;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `${base}${sfx}.srt`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+});
 
-  // Copy
-  copyBtn.addEventListener('click', async () => {
-    const t = tracks[activeTrack];
-    if (!t || !t.content) return;
-    const ok = await copyToClipboard(t.content);
-    copyBtnText.textContent = ok ? 'Đã sao chép!' : 'Lỗi sao chép';
-    setTimeout(() => { copyBtnText.textContent = 'Sao chép'; }, 1800);
-  });
-
-  // Download
-  downloadBtn.addEventListener('click', () => {
-    const t = tracks[activeTrack];
-    if (!t || !t.content) return;
-
-    const base = (currentFile ? currentFile.name : 'subtitles')
-      .replace(/\.[^.]+$/, '')
-      .replace(/[^\w\-. ]+/g, '_')
-      .slice(0, 80) || 'subtitles';
-
-    const suffixParts = [];
-    if (t.lang) suffixParts.push(t.lang);
-    else if (tracks.length > 1) suffixParts.push(String(activeTrack + 1));
-    const suffix = suffixParts.length ? '.' + suffixParts.join('.') : '';
-
-    const blob = new Blob([t.content], { type: 'application/x-subrip;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${base}${suffix}.srt`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 2000);
-  });
-
-  // Ngăn trình duyệt mở file khi drop ra ngoài drop zone
-  window.addEventListener('dragover', (e) => e.preventDefault());
-  window.addEventListener('drop', (e) => {
-    if (!dropZone.contains(e.target)) e.preventDefault();
-  });
-
-  // Kiểm tra thư viện
-  window.addEventListener('load', () => {
-    if (typeof FFmpeg === 'undefined' || !FFmpeg.createFFmpeg) {
-      showMessage('error', `
-        <svg class="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01M5.07 19h13.86a2 2 0 001.74-3L13.74 4a2 2 0 00-3.48 0L3.32 16a2 2 0 001.74 3z"/>
-        </svg>
-        <div>
-          <p class="font-semibold">Không tải được thư viện FFmpeg.wasm.</p>
-          <p class="mt-1 text-xs opacity-80">Vui lòng kiểm tra kết nối mạng và tải lại trang.</p>
-        </div>
-      `);
-    }
-  });
-})();
+window.addEventListener('dragover', e => e.preventDefault());
+window.addEventListener('drop', e => { if (!dropZone.contains(e.target)) e.preventDefault(); });
 </script>
 </body>
 </html>
