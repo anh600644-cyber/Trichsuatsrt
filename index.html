@@ -26,7 +26,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 
-<!-- FFmpeg.wasm (UMD) -->
+<!-- FFmpeg.wasm (UMD) - tải từ CDN -->
 <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
 <script src="https://unpkg.com/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
 
@@ -52,12 +52,6 @@
     background-color: rgb(99 102 241 / .08) !important;
     transform: scale(1.01);
   }
-  .shimmer {
-    background: linear-gradient(90deg, transparent, rgba(255,255,255,.06), transparent);
-    background-size: 200% 100%;
-    animation: shimmer 1.5s infinite;
-  }
-  @keyframes shimmer { 0% { background-position: 200% 0 } 100% { background-position: -200% 0 } }
 </style>
 </head>
 
@@ -258,12 +252,15 @@
   let ffmpeg        = null;
   let ffmpegLoaded  = false;
   let currentFile   = null;
-  let tracks        = [];   // { input, stream, lang, codec, title, content, error }
+  let tracks        = [];
   let activeTrack   = 0;
   let logsBuffer    = [];
 
   // Bitmap subtitle codecs (không thể chuyển sang SRT nếu không OCR)
   const BITMAP_CODECS = /^(hdmv_pgs_subtitle|dvd_subtitle|dvb_subtitle|xsub|dds|dvb_teletext)$/i;
+
+  // Đường dẫn tới file worker tự host trong repo
+  const WORKER_URL = './ffmpeg/814.ffmpeg.js';
 
   // ============================================================
   // Utilities
@@ -333,7 +330,10 @@
   }
 
   // ============================================================
-  // FFmpeg loader (lazy, single-threaded — chạy được trên GitHub Pages)
+  // FFmpeg loader
+  // - ffmpeg.js và util tải từ CDN (qua thẻ <script>)
+  // - ffmpeg-core.js / ffmpeg-core.wasm tải từ CDN rồi toBlobURL (CORS ok)
+  // - 814.ffmpeg.js PHẢI tự host (vì new Worker yêu cầu same-origin)
   // ============================================================
   async function loadFFmpeg() {
     if (ffmpegLoaded) return ffmpeg;
@@ -359,7 +359,6 @@
 
     ffmpeg.on('progress', ({ progress }) => {
       if (typeof progress === 'number' && progress > 0 && progress <= 1) {
-        // Progress bar thực của ffmpeg chỉ dùng khi transcode; ở đây chủ yếu là demux.
         const p = 45 + progress * 45;
         setProgress(p, 'Đang trích xuất phụ đề...');
       }
@@ -370,6 +369,7 @@
     await ffmpeg.load({
       coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
       wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+      classWorkerURL: WORKER_URL,   // 👈 Worker same-origin (tự host trong repo)
     });
 
     ffmpegLoaded = true;
@@ -393,8 +393,6 @@
       if (seen.has(key)) continue;
       seen.add(key);
 
-      // Cố gắng lấy title (metadata) nếu có — thường xuất hiện ở dòng riêng:
-      // "    title           : Tiếng Việt"
       streams.push({
         input,
         stream,
@@ -415,11 +413,9 @@
     try {
       code = await ffmpeg.exec(args);
     } catch (err) {
-      // ffmpeg.wasm có thể throw nếu lỗi nội bộ; coi như exit != 0
       logsBuffer.push('[exec error] ' + (err && err.message ? err.message : String(err)));
       code = -1;
     }
-    // Đảm bảo log event đã được flush
     await new Promise(r => setTimeout(r, 60));
     return { code, logs: logsBuffer.join('\n') };
   }
@@ -476,7 +472,7 @@
       }
 
       const outName = `sub_${i}.srt`;
-      const res = await runExec([
+      await runExec([
         '-hide_banner', '-nostdin', '-y',
         '-i', inputName,
         '-map', `0:${s.stream}`,
@@ -486,10 +482,8 @@
 
       try {
         const data = await ffmpeg.readFile(outName);
-        // data có thể là Uint8Array
         const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
         let content = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
-        // Bỏ BOM nếu có
         if (content.charCodeAt(0) === 0xFEFF) content = content.slice(1);
 
         if (!content.trim()) {
@@ -558,7 +552,6 @@
     const okCount = tracks.filter(t => t.content).length;
     resultsTitle.textContent = `Phụ đề tìm được — ${okCount}/${tracks.length} track trích xuất thành công`;
 
-    // Tabs
     trackTabs.innerHTML = '';
     tracks.forEach((t, i) => {
       const langLabel = t.lang ? t.lang.toUpperCase() : `Track ${i + 1}`;
@@ -588,7 +581,6 @@
       trackTabs.appendChild(btn);
     });
 
-    // Content
     const t = tracks[activeTrack];
     trackInfo.textContent = (t.codec || 'srt').toUpperCase();
 
@@ -668,9 +660,6 @@
   }
 
   function resetAll() {
-    if (ffmpegLoaded) {
-      // Không unload ffmpeg (tốn thời gian load lại), chỉ reset UI
-    }
     currentFile = null;
     tracks = [];
     activeTrack = 0;
