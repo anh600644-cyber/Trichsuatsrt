@@ -26,9 +26,8 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 
-<!-- FFmpeg.wasm (UMD) - tải từ CDN -->
-<script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
-<script src="https://unpkg.com/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
+<!-- FFmpeg.wasm 0.11.6 (single-thread, no Worker needed) -->
+<script src="https://unpkg.com/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js"></script>
 
 <style>
   html { scroll-behavior: smooth; }
@@ -178,10 +177,8 @@
       </h2>
     </div>
 
-    <!-- Track tabs -->
     <div id="trackTabs" class="flex flex-wrap gap-2"></div>
 
-    <!-- Track content -->
     <div class="rounded-2xl bg-white/[0.03] border border-white/10 overflow-hidden backdrop-blur-sm">
       <div class="flex items-center justify-between gap-3 px-4 py-3 border-b border-white/10 bg-white/[0.02] flex-wrap">
         <div class="flex items-center gap-3 min-w-0 flex-wrap">
@@ -256,11 +253,7 @@
   let activeTrack   = 0;
   let logsBuffer    = [];
 
-  // Bitmap subtitle codecs (không thể chuyển sang SRT nếu không OCR)
   const BITMAP_CODECS = /^(hdmv_pgs_subtitle|dvd_subtitle|dvb_subtitle|xsub|dds|dvb_teletext)$/i;
-
-  // Đường dẫn tới file worker tự host trong repo
-  const WORKER_URL = './ffmpeg/814.ffmpeg.js';
 
   // ============================================================
   // Utilities
@@ -330,48 +323,39 @@
   }
 
   // ============================================================
-  // FFmpeg loader
-  // - ffmpeg.js và util tải từ CDN (qua thẻ <script>)
-  // - ffmpeg-core.js / ffmpeg-core.wasm tải từ CDN rồi toBlobURL (CORS ok)
-  // - 814.ffmpeg.js PHẢI tự host (vì new Worker yêu cầu same-origin)
+  // FFmpeg loader — dùng 0.11.6, chạy single-thread trên main thread
+  // Không dùng Worker → không bị lỗi cross-origin
   // ============================================================
   async function loadFFmpeg() {
     if (ffmpegLoaded) return ffmpeg;
 
-    if (typeof FFmpegWASM === 'undefined' || typeof FFmpegUtil === 'undefined') {
+    if (typeof FFmpeg === 'undefined' || !FFmpeg.createFFmpeg) {
       throw new Error('Không tải được thư viện FFmpeg. Vui lòng kiểm tra kết nối mạng và thử lại.');
     }
 
-    const { FFmpeg } = FFmpegWASM;
-    const { toBlobURL } = FFmpegUtil;
-
     setProgress(2, 'Đang khởi tạo FFmpeg...', 'Lần đầu tải ~30MB core, vui lòng đợi...');
 
-    ffmpeg = new FFmpeg();
-
-    ffmpeg.on('log', ({ message }) => {
-      logsBuffer.push(message);
-      if (message && message.length) {
-        progressDetail.textContent = message.length > 140 ? message.slice(0, 140) + '…' : message;
-        progressDetail.title = message;
-      }
+    ffmpeg = FFmpeg.createFFmpeg({
+      log: true,
+      logger: ({ type, message }) => {
+        if (message) {
+          logsBuffer.push(message);
+          if (message.length) {
+            progressDetail.textContent = message.length > 140 ? message.slice(0, 140) + '…' : message;
+            progressDetail.title = message;
+          }
+        }
+      },
+      progress: ({ ratio }) => {
+        if (typeof ratio === 'number' && ratio > 0 && ratio <= 1) {
+          const p = 45 + ratio * 45;
+          setProgress(p, 'Đang trích xuất phụ đề...');
+        }
+      },
+      corePath: 'https://unpkg.com/@ffmpeg/core@0.11.0/dist/ffmpeg-core.js',
     });
 
-    ffmpeg.on('progress', ({ progress }) => {
-      if (typeof progress === 'number' && progress > 0 && progress <= 1) {
-        const p = 45 + progress * 45;
-        setProgress(p, 'Đang trích xuất phụ đề...');
-      }
-    });
-
-    const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
-
-    await ffmpeg.load({
-      coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-      wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-      classWorkerURL: WORKER_URL,   // 👈 Worker same-origin (tự host trong repo)
-    });
-
+    await ffmpeg.load();
     ffmpegLoaded = true;
     return ffmpeg;
   }
@@ -405,19 +389,17 @@
   }
 
   // ============================================================
-  // Run ffmpeg.exec và capture logs
+  // Run ffmpeg.run và capture logs
   // ============================================================
   async function runExec(args) {
     logsBuffer = [];
-    let code = 0;
     try {
-      code = await ffmpeg.exec(args);
+      await ffmpeg.run(...args);
     } catch (err) {
       logsBuffer.push('[exec error] ' + (err && err.message ? err.message : String(err)));
-      code = -1;
     }
     await new Promise(r => setTimeout(r, 60));
-    return { code, logs: logsBuffer.join('\n') };
+    return { logs: logsBuffer.join('\n') };
   }
 
   // ============================================================
@@ -432,16 +414,16 @@
 
     // 1. Ghi file vào virtual FS
     setProgress(10, 'Đang nạp file video...', `${file.name} · ${formatBytes(file.size)}`);
-    const { fetchFile } = FFmpegUtil;
-    await ffmpeg.writeFile(inputName, await fetchFile(file));
+    const data = await FFmpeg.fetchFile(file);
+    ffmpeg.FS('writeFile', inputName, data);
 
-    // 2. Probe để tìm subtitle streams
+    // 2. Probe để tìm subtitle streams (chạy 1 lệnh ffmpeg ngắn để lấy log)
     setProgress(25, 'Đang phân tích video...', 'Tìm phụ đề tích hợp...');
     const probe = await runExec(['-hide_banner', '-i', inputName]);
     const streams = parseSubtitleStreams(probe.logs);
 
     if (streams.length === 0) {
-      try { await ffmpeg.deleteFile(inputName); } catch (_) {}
+      try { ffmpeg.FS('unlink', inputName); } catch (_) {}
       hideProgress();
       showMessage('warn', `
         <svg class="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -481,9 +463,8 @@
       ]);
 
       try {
-        const data = await ffmpeg.readFile(outName);
-        const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
-        let content = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+        const raw = ffmpeg.FS('readFile', outName);
+        let content = new TextDecoder('utf-8', { fatal: false }).decode(raw);
         if (content.charCodeAt(0) === 0xFEFF) content = content.slice(1);
 
         if (!content.trim()) {
@@ -499,11 +480,11 @@
         });
       }
 
-      try { await ffmpeg.deleteFile(outName); } catch (_) {}
+      try { ffmpeg.FS('unlink', outName); } catch (_) {}
     }
 
     // 4. Dọn dẹp input
-    try { await ffmpeg.deleteFile(inputName); } catch (_) {}
+    try { ffmpeg.FS('unlink', inputName); } catch (_) {}
 
     // 5. Kết thúc
     setProgress(100, 'Hoàn tất!', '');
@@ -751,7 +732,7 @@
 
   // Kiểm tra thư viện
   window.addEventListener('load', () => {
-    if (typeof FFmpegWASM === 'undefined' || typeof FFmpegUtil === 'undefined') {
+    if (typeof FFmpeg === 'undefined' || !FFmpeg.createFFmpeg) {
       showMessage('error', `
         <svg class="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
           <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01M5.07 19h13.86a2 2 0 001.74-3L13.74 4a2 2 0 00-3.48 0L3.32 16a2 2 0 001.74 3z"/>
