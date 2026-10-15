@@ -6,6 +6,25 @@
 <title>SRT Extractor — Trích xuất phụ đề từ video</title>
 <meta name="description" content="Trích xuất phụ đề .srt từ file video (mp4, mkv, webm...) trực tiếp trên trình duyệt, không cần server." />
 
+<!-- ⚡ Service Worker để bật crossOriginIsolated (COOP/COEP) trên GitHub Pages -->
+<!-- Phải đặt TRƯỚC mọi script khác -->
+<script>
+  // Đăng ký coi-serviceworker để giả lập header COOP/COEP
+  // Nhờ đó SharedArrayBuffer hoạt động → FFmpeg.wasm chạy đa luồng
+  if (!self.crossOriginIsolated) {
+    navigator.serviceWorker.register('./coi-serviceworker.js')
+      .then(function (reg) {
+        // Nếu SW chưa điều khiển trang → reload 1 lần để nó áp dụng
+        if (!navigator.serviceWorker.controller) {
+          window.location.reload();
+        }
+      })
+      .catch(function (e) {
+        console.warn('COI Service Worker registration failed:', e);
+      });
+  }
+</script>
+
 <!-- Tailwind CSS -->
 <script src="https://cdn.tailwindcss.com"></script>
 <script>
@@ -26,7 +45,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 
-<!-- FFmpeg.wasm 0.11.6 (single-thread, no Worker needed) -->
+<!-- FFmpeg.wasm 0.11.6 (single-file UMD) -->
 <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js"></script>
 
 <style>
@@ -323,14 +342,20 @@
   }
 
   // ============================================================
-  // FFmpeg loader — dùng 0.11.6, chạy single-thread trên main thread
-  // Không dùng Worker → không bị lỗi cross-origin
+  // FFmpeg loader — dùng 0.11.6 với SharedArrayBuffer (đã bật COI)
   // ============================================================
   async function loadFFmpeg() {
     if (ffmpegLoaded) return ffmpeg;
 
     if (typeof FFmpeg === 'undefined' || !FFmpeg.createFFmpeg) {
       throw new Error('Không tải được thư viện FFmpeg. Vui lòng kiểm tra kết nối mạng và thử lại.');
+    }
+
+    if (typeof SharedArrayBuffer === 'undefined') {
+      throw new Error(
+        'SharedArrayBuffer chưa khả dụng. Service Worker COI có thể chưa được kích hoạt. ' +
+        'Vui lòng tải lại trang (Ctrl+Shift+R) và thử lại.'
+      );
     }
 
     setProgress(2, 'Đang khởi tạo FFmpeg...', 'Lần đầu tải ~30MB core, vui lòng đợi...');
@@ -417,7 +442,7 @@
     const data = await FFmpeg.fetchFile(file);
     ffmpeg.FS('writeFile', inputName, data);
 
-    // 2. Probe để tìm subtitle streams (chạy 1 lệnh ffmpeg ngắn để lấy log)
+    // 2. Probe để tìm subtitle streams
     setProgress(25, 'Đang phân tích video...', 'Tìm phụ đề tích hợp...');
     const probe = await runExec(['-hide_banner', '-i', inputName]);
     const streams = parseSubtitleStreams(probe.logs);
